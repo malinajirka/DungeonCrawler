@@ -4,13 +4,16 @@
 //
 // Author: Nathan Bean
 //
+// Modified: Devin Kelly-Collins - Added debugTexture and logic to draw collisions in Draw. Added logic to draw actorText in draw. (11/15/12)
+//
 // Modified: Nick Stanley added HUDSpriteComponent, 10/15/2012
 // Modified: Devin Kelly-Collins added WeaponSprite rendering, 10/24/2012
-//
+// Modified: Samuel Fike and Jiri Malina: Fixed errors due to removal of movementSprite for players
 // Kansas State Univerisity CIS 580 Fall 2012 Dungeon Crawler Game
 // Copyright (C) CIS 580 Fall 2012 Class. All rights reserved.
 // Released under the Microsoft Permissive Licence 
 //-----------------------------------------------------------------------------
+
 #endregion
 
 #region Using Statements
@@ -41,6 +44,12 @@ namespace DungeonCrawler.Systems
         /// </summary>
         private SpriteBatch spriteBatch;
 
+        private SpriteFont _actorTextFont;
+
+#if DEBUG
+        private Texture2D _debugTexture;
+#endif
+
         #endregion
 
         #region Constructors
@@ -53,6 +62,15 @@ namespace DungeonCrawler.Systems
         {
             this.game = game;
             this.spriteBatch = new SpriteBatch(game.GraphicsDevice);
+            this._actorTextFont = game.Content.Load<SpriteFont>("SpriteFonts/Pescadero");
+
+#if DEBUG
+            _debugTexture = new Texture2D(game.GraphicsDevice, 1, 1);
+
+	        Color[] data = new Color[1];
+	        for (int i = 0; i < data.Length; ++i) { data[i] = Color.Red; data[i].A /= 2; }
+	        _debugTexture.SetData(data);
+#endif
         }
 
         #endregion
@@ -68,52 +86,83 @@ namespace DungeonCrawler.Systems
         public void Draw(float elapsedTime)
         {
             spriteBatch.Begin(SpriteSortMode.BackToFront, null, SamplerState.PointClamp, null, null, null);
+            uint roomId;
+            try
+            {
+                roomId = DungeonCrawlerGame.LevelManager.getCurrentRoom().EntityID;
+            }
+            catch
+            {
+                roomId = uint.MaxValue;
+            }
 
             // Draw all Sprites
             foreach (Sprite sprite in game.SpriteComponent.All)
             {
                 Position position = game.PositionComponent[sprite.EntityID];
-                spriteBatch.Draw(sprite.SpriteSheet, 
-                                position.Center, 
-                                sprite.SpriteBounds, 
-                                Color.White, 
-                                0f,                                             // rotation
-                                new Vector2(position.Radius, position.Radius),  // origin
-                                1f,                                             // scale
-                                SpriteEffects.None,
-                                1); 
+                if (position.RoomID == roomId)
+                {
+
+                    spriteBatch.Draw(sprite.SpriteSheet,
+                                    position.Center,
+                                    sprite.SpriteBounds,
+                                    Color.White,
+                                    0f,                                             // rotation
+                                    new Vector2(position.Radius, position.Radius),  // origin
+                                    1f,                                             // scale
+                                    SpriteEffects.None,
+                                    1);
+                }
             }
 
             // Draw all MovementSprites
             foreach (MovementSprite sprite in game.MovementSpriteComponent.All)
             {
                 Position position = game.PositionComponent[sprite.EntityID];
-                spriteBatch.Draw(sprite.SpriteSheet,
-                                position.Center,
-                                sprite.SpriteBounds,
-                                Color.White,
-                                0f,                                             // rotation
-                                new Vector2(position.Radius, position.Radius),  // origin
-                                1f,                                             // scale
-                                SpriteEffects.None,
-                                .8f);
+                if (position.RoomID == roomId)
+                {
+                    spriteBatch.Draw(sprite.SpriteSheet,
+                                    position.Center,
+                                    sprite.SpriteBounds,
+                                    Color.White,
+                                    0f,                                             // rotation
+                                    new Vector2(position.Radius, position.Radius),  // origin
+                                    1f,                                             // scale
+                                    SpriteEffects.None,
+                                    .8f);
+                }
+            }
+
+            //Draw actor text
+            foreach (ActorText actorText in game.ActorTextComponent.All)
+            {
+                Position position = game.PositionComponent[actorText.EntityID];
+                if(position.RoomID == roomId)
+                {
+                    position.Center.Y -= actorText.Offset;
+                    spriteBatch.DrawString(_actorTextFont, actorText.Text, position.Center, Color.White);
+                }
             }
 
             //Draw Weapon animations
             foreach (WeaponSprite sprite in game.WeaponSpriteComponent.All)
             {
                 Position position = game.PositionComponent[sprite.EntityID];
-                Facing facing = game.MovementSpriteComponent[sprite.EntityID].Facing;
-                position.Center = applyFacingOffset(facing, position.Center);
-                spriteBatch.Draw(sprite.SpriteSheet,
-                                position.Center,
-                                sprite.SpriteBounds,
-                                Color.White,
-                                0f,
-                                new Vector2(position.Radius),
-                                1f,
-                                SpriteEffects.None,
-                                (facing == Facing.North) ? .9f : .7f);
+                if (position.RoomID == roomId)
+                {
+                    Facing facing = (Facing)game.SpriteAnimationComponent[sprite.EntityID].CurrentAnimationRow; //changed to get direction from spriteanimation instead of movementsprite, currentAnimationRow returns same values as facing for directions
+
+                    position.Center = applyFacingOffset(facing, position.Center);
+                    spriteBatch.Draw(sprite.SpriteSheet,
+                                    position.Center,
+                                    sprite.SpriteBounds,
+                                    Color.White,
+                                    0f,
+                                    new Vector2(position.Radius),
+                                    1f,
+                                    SpriteEffects.None,
+                                    (facing == Facing.North) ? .9f : .7f);
+                }
             }
 
             //Draw HUD
@@ -172,6 +221,24 @@ namespace DungeonCrawler.Systems
                                     0.5f);
                 }
             }
+
+#if DEBUG
+            //If we are in debug, draw the collision bounds.
+            uint roomID = game.CurrentRoomEid;
+
+            foreach (Collideable collision in game.CollisionComponent.InRoom(roomID))
+            {
+                if (collision.Bounds is RectangleBounds)
+                    spriteBatch.Draw(_debugTexture, ((RectangleBounds)collision.Bounds).Rectangle, Color.Red);
+                else
+                {
+                    //Might want to change this to a circle.
+                    CircleBounds bounds = (CircleBounds)collision.Bounds;
+                    spriteBatch.Draw(_debugTexture, new Rectangle((int)(bounds.Center.X - bounds.Radius), (int)(bounds.Center.Y - bounds.Radius),
+                        (int)(bounds.Radius * 2), (int)(bounds.Radius * 2)), Color.Red);
+                }
+            }
+#endif
 
             spriteBatch.End();
         }
